@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Parking Proximiter</string>
+    <string name="menu1">Find Parking</string>
+    <string name="menu2">App Info</string>
+    <string name="info">App Purpose: \nIn HK, finding parking space is often difficult. This map helps user finding a vacant parking space nearby by taking advantage of data.gov API. \nAlthough not all parking space is modernized, the API possess real-time status of over 18,000 parking space, providing good reference for drivers.\n\nThis app makes use of external resources including chaquopy, openstreetmap. \n\nThis app is developed by Rex Li for the purpose of course project for HKU COMP7506.\n\nHow to use: \nNavigate the streets as the app receive GPS location and search for vacant parking space nearby. User can click on the list for exact location of the vacant parking space. For drivers, long-press on the list will direct to GoogleMap Direction, allowing real-time driving navigation to the designated parking space.\n\nFor safety of driving, do not operate the app while vehicle is mobile.\n\nParamater Information:\nUpdate parking space data: every minute (~0.5MB each)\nUpdate proximity (without new data): every 10 seconds\nNo. of processed parking space: 50\nDate of app dev: 04-2022</string>
+</resources>
