@@ -1,11 +1,16 @@
 package hk.hkucs.ParkingProximiter;
 
+import static com.google.android.gms.location.LocationRequest.PRIORITY_HIGH_ACCURACY;
+
 import android.Manifest;
+import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
+import android.location.Location;
+import android.location.LocationRequest;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
@@ -30,6 +35,12 @@ import androidx.core.content.ContextCompat;
 import com.chaquo.python.PyObject;
 import com.chaquo.python.Python;
 import com.chaquo.python.android.AndroidPlatform;
+import com.google.android.gms.location.FusedLocationProviderClient;
+import com.google.android.gms.location.LocationCallback;
+import com.google.android.gms.location.LocationResult;
+import com.google.android.gms.location.LocationServices;
+import com.google.android.gms.tasks.OnSuccessListener;
+import com.google.android.gms.tasks.Task;
 
 import org.osmdroid.api.IMapController;
 import org.osmdroid.config.Configuration;
@@ -42,13 +53,14 @@ import java.sql.Timestamp;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 
 public class MainActivity extends AppCompatActivity {
 
-    TextView textView, textViewL2, textViewLongitude,infoTextView;
+    TextView textView, textViewL2, textViewSub, infoTextView;
     private hk.hkucs.ParkingProximiter.GpsTracker GpsTracker;
-    Double gps_lat, gps_long;
+    Double gps_lat, gps_long, ext_lat, ext_long;
     private static final String TAG = "MainActivity";
     ArrayList<String>[] cp = new ArrayList[50];
     ArrayList<String>[] vcp = new ArrayList[50];
@@ -56,15 +68,21 @@ public class MainActivity extends AppCompatActivity {
     //OSM
     private final int REQUEST_PERMISSIONS_REQUEST_CODE = 1;
     private MapView map = null;
+
     String lastUpdate;
     int count = 0;
     boolean runValid = true;
-
+    //FusedLocationProviderClient fusedLocationClient;
 
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+
+        checkPermission();
+
+        //GpsEventListener
+        //fusedLocationClient = LocationServices.getFusedLocationProviderClient(this);
 
         //OSM Content
         Context ctx = getApplicationContext();
@@ -73,7 +91,7 @@ public class MainActivity extends AppCompatActivity {
         map = (MapView) findViewById(R.id.map);
         runValid = true;
         map.setTileSource(TileSourceFactory.MAPNIK);
-        requestPermissionsIfNecessary(new String[] {
+        requestPermissionsIfNecessary(new String[]{
                 // if you need to show the current location, uncomment the line below
                 // Manifest.permission.ACCESS_FINE_LOCATION,
                 // WRITE_EXTERNAL_STORAGE is required in order to show the map
@@ -84,25 +102,28 @@ public class MainActivity extends AppCompatActivity {
         IMapController mapController = map.getController();
 
 
-        textView = (TextView)findViewById(R.id.textview);
-        infoTextView= (TextView)findViewById(R.id.infoview);
+        textView = (TextView) findViewById(R.id.textview);
+        infoTextView = (TextView) findViewById(R.id.infoview);
 
         //Obtain GPS location
-        System.out.println( "Obtaining GPS Location:...");
+        System.out.println("Obtaining GPS Location:...");
         textViewL2 = findViewById(R.id.textViewL2);
-        textViewLongitude = findViewById(R.id.longitude);
+        textViewSub = findViewById(R.id.sub);
+
         try {
-            if (ContextCompat.checkSelfPermission(getApplicationContext(), Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED ) {
+            if (ContextCompat.checkSelfPermission(getApplicationContext(), Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
                 ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.ACCESS_FINE_LOCATION}, 101);
             }
-        } catch (Exception e){
+        } catch (Exception e) {
             e.printStackTrace();
         }
 
         getLocation();
+        ext_lat=gps_lat;
+        ext_long=gps_long;
         GeoPoint currentPosition = new GeoPoint(gps_lat, gps_long);
         mapController.setCenter(currentPosition);
-        System.out.println("GPS Obtained:"+gps_lat+' '+gps_long);
+        System.out.println("GPS Obtained:" + gps_lat + ' ' + gps_long);
         startPython();
         getVacancyCSV();
         obtainNearbyCP();
@@ -110,55 +131,98 @@ public class MainActivity extends AppCompatActivity {
 
 
         getListView(mapController);
-        setButton(currentPosition,mapController,infoTextView);
+        setButton(currentPosition, mapController, infoTextView);
         //startMap();
         int d = Integer.parseInt(cp[40].get(1));
-        double zoomRange = 19-Math.log10(d/6);
+        double zoomRange = 19 - Math.log10(d / 6);
         mapController.setZoom(zoomRange);
         //System.out.println("zoom range: "+ String.valueOf(d) + ' ' + String.valueOf(zoomRange));
 
         final Handler handler = new Handler();
-        final int delay2 = 10000; //milliseconds
+        final int delay2 = 5000; //milliseconds
         handler.postDelayed(new Runnable() {
             public void run() {
-                if (runValid){
-                    System.out.println("map"+String.valueOf(map));
-                    if (count == 6 && map!=null) {
+                if (runValid) {
+                    System.out.println("count="+String.valueOf(count)+" map is null: "+String.valueOf(map==null));
+                    //System.out.println("map" + String.valueOf(map));
+                    if (count % 12!=0 && map != null) {
+                        System.out.println("~recalculate...");
                         reCalculate(currentPosition, mapController);
-                        count = 0;
                     } else {
-                        if (map!=null) {
+                        if (map != null) {
+                            System.out.println("~updateAll...");
                             updateAll(currentPosition, mapController);
-                            count += 1;
                         }
                     }
+                    count+=1;
                     handler.postDelayed(this, delay2);
                 }
             }
         }, delay2);
-
-
-
     }
 
 
     // Main Functions
     public void getLocation() {
         System.out.println("getLocation...");
-        GpsTracker = new GpsTracker(MainActivity.this);
-        if (GpsTracker.canGetLocation()) {
-            gps_lat = GpsTracker.getLatitude();
-            gps_long = GpsTracker.getLongitude();
-        } else {
-            GpsTracker.showSettingsAlert();
+
+        gps_lat=0.0;
+        int n = 0;
+        while (gps_lat.equals(0.0) && n<10) {
+
+            GpsTracker = new GpsTracker(MainActivity.this);
+            if (GpsTracker.canGetLocation()) {
+                gps_lat = GpsTracker.getLatitude();
+                gps_long = GpsTracker.getLongitude();
+            } else {
+                GpsTracker.showSettingsAlert();
+            }
+            n+=1;
         }
-        System.out.println("Location: "+ String.valueOf(gps_lat)+','+String.valueOf(gps_long));
+
+
+        /*
+        //gps_lat = 22.283541;
+        //gps_long = 114.135374;
+        fusedLocationClient.getLastLocation().addOnSuccessListener(this, new OnSuccessListener<Location>(){
+            @Override
+            public void onSuccess(Location location){
+                if (location != null) {
+                    gps_lat = location.getLatitude();
+                    gps_long = location.getLongitude();
+                }
+            }
+        });
+        System.out.println("Location1: "+ String.valueOf(gps_lat)+','+String.valueOf(gps_long));
+        fusedLocationClient.getCurrentLocation(PRIORITY_HIGH_ACCURACY, null).addOnSuccessListener(this, new OnSuccessListener<Location>() {
+            @Override
+            public void onSuccess(Location location) {
+                // Got last known location. In some rare situations this can be null.
+                System.out.println("Location2: "+ String.valueOf(location));
+                if (location != null) {
+                    gps_lat = location.getLatitude();
+                    gps_long = location.getLongitude();
+                }
+            }
+
+        });
+
+        //System.out.println("aaaaaLocation: "+  String.valueOf(fusedLocationClient.getCurrentLocation(PRIORITY_HIGH_ACCURACY, null)));
+
+         */
+
+
+
+        System.out.println("Location3: "+ String.valueOf(gps_lat)+','+String.valueOf(gps_long));
+        textViewSub.setText("sys:"+gps_lat+", "+gps_long);
+
         if (Math.abs(23-gps_lat)>1 || Math.abs(114-gps_long)>1) {
-            System.out.println("Outside Hong Kong. Use default location");
+            System.out.println("Outside Hong Kong. Use default location "+String.valueOf(Math.abs(23-gps_lat)));
             gps_lat = 22.283541;
             gps_long = 114.135374;
         }
     }
+
     public void startPython() {
         //start python
         if (!Python.isStarted()) {
@@ -263,6 +327,7 @@ public class MainActivity extends AppCompatActivity {
         Button button = (Button) findViewById(R.id.refreshBuutton);
         button.setOnClickListener(new View.OnClickListener(){
             public void onClick(View v){
+                mapController.animateTo(currentPosition);
                 updateAll(currentPosition,mapController);
                 infoTextView.setText("");
             }
@@ -316,9 +381,15 @@ public class MainActivity extends AppCompatActivity {
     }
     public void reCalculate(GeoPoint currentPosition,IMapController mapController){
         getLocation();
-        obtainNearbyCP();
-        getListView(mapController);
-        updateMarker(currentPosition);
+        System.out.println(String.valueOf(ext_lat)+' '+String.valueOf(ext_long)+' '+String.valueOf(gps_lat)+' '+String.valueOf(gps_long));
+        if (!gps_lat.equals(ext_lat) || !gps_long.equals(ext_long)){
+            obtainNearbyCP();
+            getListView(mapController);
+            updateMarker(currentPosition);
+            ext_lat=gps_lat;
+            ext_long=gps_long;
+        }
+
     }
 
     //
@@ -345,6 +416,31 @@ public class MainActivity extends AppCompatActivity {
     public void sendMessage() {
         Intent intent = new Intent(this, InfoActivity.class);
         startActivity(intent);
+    }
+
+    public void checkPermission(){
+        Context mContext;
+        mContext = MainActivity.this;
+        if (ActivityCompat.checkSelfPermission(mContext, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions((Activity) mContext, new String[]{android.Manifest.permission.ACCESS_FINE_LOCATION}, 101);
+        }
+        if (ActivityCompat.checkSelfPermission(mContext, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions((Activity) mContext, new String[]{android.Manifest.permission.ACCESS_COARSE_LOCATION}, 101);
+        }
+        if (ActivityCompat.checkSelfPermission(mContext, Manifest.permission.INTERNET) != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions((Activity) mContext, new String[]{android.Manifest.permission.INTERNET}, 101);
+        }
+        if (ActivityCompat.checkSelfPermission(mContext, Manifest.permission.ACCESS_WIFI_STATE) != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions((Activity) mContext, new String[]{android.Manifest.permission.ACCESS_WIFI_STATE}, 101);
+        }
+        if (ActivityCompat.checkSelfPermission(mContext, Manifest.permission.ACCESS_NETWORK_STATE) != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions((Activity) mContext, new String[]{android.Manifest.permission.ACCESS_NETWORK_STATE}, 101);
+        }
+        if (ActivityCompat.checkSelfPermission(mContext, Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions((Activity) mContext, new String[]{android.Manifest.permission.WRITE_EXTERNAL_STORAGE}, 101);
+        }
+
+
     }
 
 
